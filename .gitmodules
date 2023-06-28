@@ -1,3 +1,11 @@
 [submodule "deps/git-subrepo"]
 	path = deps/git-subrepo
 	url = https://github.com/ingydotnet/git-subrepo.git
+
+[submodule "modules/mod-eluna"]
+	path = modules/mod-eluna
+	url = https://github.com/peitali/mod-eluna.git
+
+[submodule "modules/mod-synthesize-trainer"]
+	path = modules/mod-synthesize-trainer
+	url = https://github.com/peitali/mod-synthesize-trainer.git

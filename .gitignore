@@ -98,3 +98,6 @@ local.properties
 #  !modules/yourmodule
 #
 # ==================
+.vs
+.vscode
+out
