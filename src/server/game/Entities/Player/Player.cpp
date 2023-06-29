@@ -8831,13 +8831,17 @@ Pet* Player::GetPet() const
 
 Pet* Player::SummonPet(uint32 entry, float x, float y, float z, float ang, PetType petType, Milliseconds duration /*= 0s*/, uint32 healthPct /*= 0*/)
 {
+    //获取或初始化宠物栏
     PetStable& petStable = GetOrInitPetStable();
 
+    //创建一个宠物对象
     Pet* pet = new Pet(this, petType);
 
+    //如果宠物是召唤宠物，并且成功从数据库中加载了宠物信息，那么执行下面的代码。
     if (petType == SUMMON_PET && pet->LoadPetFromDB(this, entry, 0, false, healthPct))
     {
         // Remove Demonic Sacrifice auras (known pet)
+        //遍历宠物的光环效果列表，如果找到特定的光环效果（ID为2228），则移除它
         Unit::AuraEffectList const& auraClassScripts = GetAuraEffectsByType(SPELL_AURA_OVERRIDE_CLASS_SCRIPTS);
         for (Unit::AuraEffectList::const_iterator itr = auraClassScripts.begin(); itr != auraClassScripts.end();)
         {
@@ -8850,11 +8854,13 @@ Pet* Player::SummonPet(uint32 entry, float x, float y, float z, float ang, PetTy
                 ++itr;
         }
 
+        // 如果持续时间大于0秒，那么设置宠物的持续时间。
         if (duration > 0s)
             pet->SetDuration(duration);
 
         // Generate a new name for the newly summoned ghoul
-        if (pet->IsPetGhoul())
+    //    如果宠物是食尸鬼类型，那么生成一个新的名字。
+    if (pet->IsPetGhoul())
         {
             std::string new_name = sObjectMgr->GeneratePetNameLocale(entry, GetSession()->GetSessionDbLocaleIndex());
             if (!new_name.empty())
@@ -8865,13 +8871,16 @@ Pet* Player::SummonPet(uint32 entry, float x, float y, float z, float ang, PetTy
     }
 
     // petentry == 0 for hunter "call pet" (current pet summoned if any)
+//    宠物entry==0，那么删除宠物并返回空指针
     if (!entry)
     {
         delete pet;
         return nullptr;
     }
 
+    // 设置将宠物移动到指定的位置
     pet->Relocate(x, y, z, ang);
+//        如果宠物的位置无效，那么删除宠物并返回空指针。
     if (!pet->IsPositionValid())
     {
         LOG_ERROR("misc", "Player::SummonPet: Pet ({}, Entry: {}) not summoned. Suggested coordinates aren't valid (X: {} Y: {})", pet->GetGUID().ToString(), pet->GetEntry(), pet->GetPositionX(), pet->GetPositionY());
@@ -8881,6 +8890,7 @@ Pet* Player::SummonPet(uint32 entry, float x, float y, float z, float ang, PetTy
 
     Map* map = GetMap();
     uint32 pet_number = sObjectMgr->GeneratePetNumber();
+//                    如果无法在地图上创建宠物，那么删除宠物并返回空指针。
     if (!pet->Create(map->GenerateLowGuid<HighGuid::Pet>(), map, GetPhaseMask(), entry, pet_number))
     {
         LOG_ERROR("misc", "Player::SummonPet: No such creature entry {}", entry);
@@ -8888,6 +8898,7 @@ Pet* Player::SummonPet(uint32 entry, float x, float y, float z, float ang, PetTy
         return nullptr;
     }
 
+//    如果宠物类型是召唤宠物，并且当前已经有宠物，那么移除当前的宠物。
     if (petType == SUMMON_PET && petStable.CurrentPet)
         RemovePet(nullptr, PET_SAVE_NOT_IN_SLOT);
 
@@ -8898,6 +8909,7 @@ Pet* Player::SummonPet(uint32 entry, float x, float y, float z, float ang, PetTy
     pet->SetUInt32Value(UNIT_FIELD_BYTES_1, 0);
     pet->InitStatsForLevel(GetLevel());
 
+//        设置宠物为随从
     SetMinion(pet, true);
 
     if (petType == SUMMON_PET)
@@ -8918,9 +8930,10 @@ Pet* Player::SummonPet(uint32 entry, float x, float y, float z, float ang, PetTy
         pet->SetPower(POWER_MANA, pet->GetMaxPower(POWER_MANA));
         pet->SetUInt32Value(UNIT_FIELD_PET_NAME_TIMESTAMP, uint32(GameTime::GetGameTime().count())); // cast can't be helped in this case
     }
-
+//    将宠物添加到地图上
     map->AddToMap(pet->ToCreature(), true);
 
+//    填充宠物的信息。
     ASSERT(!petStable.CurrentPet && (petType != HUNTER_PET || !petStable.GetUnslottedHunterPet()));
     pet->FillPetInfo(&petStable.CurrentPet.emplace());
 

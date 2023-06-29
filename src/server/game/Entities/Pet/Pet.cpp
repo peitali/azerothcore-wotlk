@@ -208,9 +208,12 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
 {
     m_loading = true;
 
+    //获取owner的宠物栏，获取的指针为空则直接返回false
     PetStable* petStable = ASSERT_NOTNULL(owner->GetPetStable());
 
+    //获取owner的GUID
     ObjectGuid::LowType ownerid = owner->GetGUID().GetCounter();
+    //加载pet信息 owner的pet栏 ，pet entry，pet编号，
     std::pair<PetStable::PetInfo const*, PetSaveMode> info = GetLoadPetInfo(*petStable, petEntry, petnumber, current);
     PetStable::PetInfo const* petInfo = info.first;
     PetSaveMode slot = info.second;
@@ -221,6 +224,7 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
     }
 
     // Don't try to reload the current pet
+    //不要尝试重新加载当前宠物
     if (petStable->CurrentPet && owner->GetPet() && petStable->CurrentPet.value().PetNumber == petInfo->PetNumber)
         return false;
 
