@@ -2020,14 +2020,20 @@ void Pet::CleanupActionBar()
             }
 }
 
+//初始化宠物技能
 void Pet::InitPetCreateSpells()
 {
+    //初始化宠物动作栏
     m_charmInfo->InitPetActionBar();
+    //清空m_spells
     m_spells.clear();
 
+    //学习宠物的被动技能
     LearnPetPassives();
+    //初始化宠物升级时的技能
     InitLevelupSpellsForLevel();
 
+    //施放宠物光环
     CastPetAuras(false);
 }
 

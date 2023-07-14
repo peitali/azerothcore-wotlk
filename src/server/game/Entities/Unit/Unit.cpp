@@ -10660,76 +10660,101 @@ Unit* Unit::GetCharm() const
     return nullptr;
 }
 
+//设置仆从
 void Unit::SetMinion(Minion* minion, bool apply)
 {
     LOG_DEBUG("entities.unit", "SetMinion {} for {}, apply {}", minion->GetEntry(), GetEntry(), apply);
 
     if (apply)
     {
+        //检查宠物的所有者GUID是否为空，如果不为空则抛错
         if (minion->GetOwnerGUID())
         {
             LOG_FATAL("entities.unit", "SetMinion: Minion {} is not the minion of owner {}", minion->GetEntry(), GetEntry());
             return;
         }
 
+        //设置仆从的所有者GUID为当前单位的GUID
         minion->SetOwnerGUID(GetGUID());
 
+        //将仆从添加到当前单位的控制列表中
         m_Controlled.insert(minion);
 
+        //如果当前单位的类型是玩家
         if (GetTypeId() == TYPEID_PLAYER)
         {
+            //将仆从标记为玩家控制
             minion->m_ControlledByPlayer = true;
             minion->SetUnitFlag(UNIT_FLAG_PLAYER_CONTROLLED);
         }
 
         // Can only have one pet. If a new one is summoned, dismiss the old one.
+        // 只能养一只宠物。如果召集了一个新的，就解散旧的。
+        // 判断仆从是否是守护宠物，
         if (minion->IsGuardianPet())
         {
+            //获取当前单位的守护宠物（旧宠物），如果存在，判断是否需要替换守护宠物。
             if (Guardian* oldPet = GetGuardianPet())
             {
+                //如果旧宠物和传入的仆从不等，并且旧宠物和传入仆从都是宠物，或者2个的entry不同
                 if (oldPet != minion && (oldPet->IsPet() || minion->IsPet() || oldPet->GetEntry() != minion->GetEntry()))
                 {
                     // remove existing minion pet
+                    //移除已存在的守护宠物
                     if (Pet* oldPetAsPet = oldPet->ToPet())
                     {
+                        //貌似此行是移除未插槽的方式移除旧宠物
                         oldPetAsPet->Remove(PET_SAVE_NOT_IN_SLOT);
                     }
                     else
                     {
+                        //找回（解散）旧宠物
                         oldPet->UnSummon();
                     }
 
+                    //设置当前单位的宠物guid，为仆从的guid
                     SetPetGUID(minion->GetGUID());
                     SetMinionGUID(ObjectGuid::Empty);
                 }
             }
             else
             {
+                //运行此处，表示没有召唤旧宠物，可直接设置新宠物的guid
                 SetPetGUID(minion->GetGUID());
                 SetMinionGUID(ObjectGuid::Empty);
             }
         }
 
+        //如果仆从具有UNIT_MASK_CONTROLABLE_GUARDIAN标志
+        //（单位_任务_控制_警卫）
         if (minion->HasUnitTypeMask(UNIT_MASK_CONTROLABLE_GUARDIAN))
         {
+            //将仆从的guid添加到当前单位的UNIT_FIELD_SUMMON字段中
             AddGuidValue(UNIT_FIELD_SUMMON, minion->GetGUID());
         }
 
+        //如果当前传入仆从是小宠物类型
         if (minion->m_Properties && minion->m_Properties->Type == SUMMON_TYPE_MINIPET)
         {
+            //则将其GUID设置为当前单位的小宠物GUID
             SetCritterGUID(minion->GetGUID());
         }
 
         // PvP, FFAPvP
+        //设置传入仆从的PvP, FFAPvP标志与当前单位的一致
         minion->SetByteValue(UNIT_FIELD_BYTES_2, 1, GetByteValue(UNIT_FIELD_BYTES_2, 1));
 
         // Ghoul pets have energy instead of mana (is anywhere better place for this code?)
+        // 食尸鬼宠物有能量而不是法力（有更好的地方可以使用这个代码吗？）
+        // 如果仆从是食尸鬼宠物或者其Entry为24207（亡者大军），则将其能量类型设置为能量
         if (minion->IsPetGhoul() || minion->GetEntry() == 24207 /*ENTRY_ARMY_OF_THE_DEAD*/)
             minion->setPowerType(POWER_ENERGY);
 
         if (GetTypeId() == TYPEID_PLAYER)
         {
             // Send infinity cooldown - client does that automatically but after relog cooldown needs to be set again
+            // 发送无限冷却时间-客户端会自动执行此操作，但在重新记录冷却时间后需要再次设置
+            // 如果当前单位是玩家，则发送无限冷却时间给客户端，以防止客户端在重新登录后冷却时间被重置。
             SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(minion->GetUInt32Value(UNIT_CREATED_BY_SPELL));
 
             if (spellInfo && spellInfo->IsCooldownStartedOnEvent())
@@ -10738,30 +10763,41 @@ void Unit::SetMinion(Minion* minion, bool apply)
     }
     else
     {
+
+        // 判断仆从的所有者guid是否是当前单位
         if (minion->GetOwnerGUID() != GetGUID())
         {
             LOG_FATAL("entities.unit", "SetMinion: Minion {} is not the minion of owner {}", minion->GetEntry(), GetEntry());
             return;
         }
 
+        //从当前单位控制列表中删除该仆从
         m_Controlled.erase(minion);
 
+        //如果仆从是小宠物类型
         if (minion->m_Properties && minion->m_Properties->Type == SUMMON_TYPE_MINIPET)
         {
+            //如果仆从是当前单位的当前小宠物，则将宠物设为空
             if (GetCritterGUID() == minion->GetGUID())
                 SetCritterGUID(ObjectGuid::Empty);
         }
 
+        //如果仆从是守护宠物
         if (minion->IsGuardianPet())
         {
+            //如果仆从是当前单位的当前宠物，则将宠物设为空
             if (GetPetGUID() == minion->GetGUID())
                 SetPetGUID(ObjectGuid::Empty);
         }
         else if (minion->IsTotem())
         {
+            //如果召唤物（仆从？）是图腾，那么将移除所有由该图腾召唤的召唤物
             // All summoned by totem minions must disappear when it is removed.
+            // （图腾召唤的所有人必须在移除后消失）
+            //获取召唤物的法术信息
             if (SpellInfo const* spInfo = sSpellMgr->GetSpellInfo(minion->ToTotem()->GetSpell()))
             {
+                //这里通过获取图腾的法术信息，遍历法术效果，找到召唤效果，并移除相应的召唤物。
                 for (int i = 0; i < MAX_SPELL_EFFECTS; ++i)
                 {
                     if (spInfo->Effects[i].Effect != SPELL_EFFECT_SUMMON)
@@ -10772,50 +10808,72 @@ void Unit::SetMinion(Minion* minion, bool apply)
             }
         }
 
+        //如果当前实体是玩家
         if (GetTypeId() == TYPEID_PLAYER)
         {
+            //获取召唤物创建时对应的法术信息
             SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(minion->GetUInt32Value(UNIT_CREATED_BY_SPELL));
             // Remove infinity cooldown
+            //（移除无限冷却）
+            //如果存在且有冷却事件，则向玩家发送冷却事件
             if (spellInfo && spellInfo->IsCooldownStartedOnEvent())
                 ToPlayer()->SendCooldownEvent(spellInfo);
 
             // xinef: clear spell book
+            //（清除咒语书）
+            //如果当前单位的控制列表为空，则向玩家发送移除控制栏事件
             if (m_Controlled.empty())
                 ToPlayer()->SendRemoveControlBar();
         }
 
         //if (minion->HasUnitTypeMask(UNIT_MASK_GUARDIAN))
         {
+            //使用RemoveGuidValue函数移除当前单位UNIT_FIELD_SUMMON字段的召唤随从的guid
             if (RemoveGuidValue(UNIT_FIELD_SUMMON, minion->GetGUID()))
             {
                 // Check if there is another minion
+                //(检查是否还有其他仆从)
+                //迭代器遍历当前单位的控制列表中的所有元素
                 for (ControlSet::iterator itr = m_Controlled.begin(); itr != m_Controlled.end(); ++itr)
                 {
                     // do not use this check, creature do not have charm guid
+                    //（不使用此检查，生物就没有魅惑引导）
                     //if (GetCharmGUID() == (*itr)->GetGUID())
+                    //判断当前迭代器指向的仆从是否为魅惑引导的仆从，如果是，则跳过当前循环。
                     if (GetGUID() == (*itr)->GetCharmerGUID())
                         continue;
 
                     //ASSERT((*itr)->GetOwnerGUID() == GetGUID());
+                    //检查当前迭代器指向的仆从的所有者GUID是否与当前实例的GUID相同。如果不相同，则输出调试信息并终止程序
                     if ((*itr)->GetOwnerGUID() != GetGUID())
                     {
                         OutDebugInfo();
                         (*itr)->OutDebugInfo();
                         ABORT();
                     }
+                    // 确保当前迭代器指向的仆从的类型为TYPEID_UNIT。
                     ASSERT((*itr)->GetTypeId() == TYPEID_UNIT);
 
+                    // 检查当前迭代器指向的仆从是否具有UNIT_MASK_CONTROLABLE_GUARDIAN的单位类型掩码，如果不具有，则跳过当前循环
+                    // (单位_掩码_可控制_守护)
                     if (!(*itr)->HasUnitTypeMask(UNIT_MASK_CONTROLABLE_GUARDIAN))
                         continue;
 
+                    // 使用AddGuidValue函数将当前迭代器指向的仆从的GUID添加到当前单位的UNIT_FIELD_SUMMON中。
+                    // 如果添加成功，则执行以下操作
                     if (AddGuidValue(UNIT_FIELD_SUMMON, (*itr)->GetGUID()))
                     {
                         // show another pet bar if there is no charm bar
+                        //(如果没有魅力条，显示另一个宠物条)
+                        //如果当前单位的类型是玩家，且没有魅惑引导的仆从，则显示另一个宠物栏
                         if (GetTypeId() == TYPEID_PLAYER && !GetCharmGUID())
                         {
+                    //如果当前迭代器指向的仆从是宠物
                             if ((*itr)->IsPet())
+                                //初始化玩家宠物法术
                                 ToPlayer()->PetSpellInitialize();
                             else
+                                //初始化玩家魅惑法术
                                 ToPlayer()->CharmSpellInitialize();
                         }
                     }
@@ -15810,7 +15868,7 @@ void CharmInfo::RestoreState()
     if (Creature* creature = _unit->ToCreature())
         creature->SetReactState(_oldReactState);
 }
-
+//初始化宠物控制bar栏
 void CharmInfo::InitPetActionBar()
 {
     // the first 3 SpellOrActions are attack, follow and stay
@@ -15872,10 +15930,13 @@ void CharmInfo::InitPossessCreateSpells()
         InitEmptyActionBar();
 }
 
+//初始化魅惑生物技能
 void CharmInfo::InitCharmCreateSpells()
 {
+    //初始化宠物动作条
     InitPetActionBar();
 
+    //判断单位是否为玩家
     if (_unit->GetTypeId() == TYPEID_PLAYER)                // charmed players don't have spells
     {
         //InitEmptyActionBar();
@@ -15884,19 +15945,25 @@ void CharmInfo::InitCharmCreateSpells()
 
     //InitPetActionBar();
 
+    //遍历最大技能数，默认是4个
     for (uint32 x = 0; x < MAX_SPELL_CHARM; ++x)
     {
+        //通过索引获取生物的技能数组的id
         uint32 spellId = _unit->ToCreature()->m_spells[x];
         SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(spellId);
 
+        //如果获取到的技能信息为空
         if (!spellInfo)
         {
+            //将改技能设置为禁用
             _charmspells[x].SetActionAndType(spellId, ACT_DISABLED);
             continue;
         }
 
+        //如果获取到的技能是被动技能
         if (spellInfo->IsPassive())
         {
+            //将该技能施放给生物，并且比把技能标记为被动
             _unit->CastSpell(_unit, spellInfo, true);
             _charmspells[x].SetActionAndType(spellId, ACT_PASSIVE);
         }
@@ -15906,10 +15973,12 @@ void CharmInfo::InitCharmCreateSpells()
 
             ActiveStates newstate = ACT_PASSIVE;
 
+            //如果技能不能自动释放，
             if (!spellInfo->IsAutocastable())
                 newstate = ACT_PASSIVE;
             else
             {
+                //如果技能需要明确目标
                 if (spellInfo->NeedsExplicitUnitTarget())
                 {
                     newstate = ACT_ENABLED;
@@ -15919,23 +15988,30 @@ void CharmInfo::InitCharmCreateSpells()
                     newstate = ACT_DISABLED;
             }
 
+            //添加技能到动作条
             AddSpellToActionBar(spellInfo, newstate);
         }
     }
 }
 
+//添加技能到动作条
 bool CharmInfo::AddSpellToActionBar(SpellInfo const* spellInfo, ActiveStates newstate)
 {
+    //获取传入技能的id
     uint32 spell_id = spellInfo->Id;
+    //获取首个技能id
     uint32 first_id = spellInfo->GetFirstRankSpell()->Id;
 
     // new spell rank can be already listed
     for (uint8 i = 0; i < MAX_UNIT_ACTION_BAR_INDEX; ++i)
     {
+        //获取动作栏的动作，并且验证该动作是否存在
         if (uint32 action = PetActionBar[i].GetAction())
         {
+            //判断动作栏的动作，是否是属于法术动作栏，并且法术链的第一个动作是否与给定的first_id相同
             if (PetActionBar[i].IsActionBarForSpell() && sSpellMgr->GetFirstSpellInChain(action) == first_id)
             {
+                //设置每个动作栏槽位的技能动作，并返回true
                 PetActionBar[i].SetAction(spell_id);
                 return true;
             }
@@ -15945,6 +16021,7 @@ bool CharmInfo::AddSpellToActionBar(SpellInfo const* spellInfo, ActiveStates new
     // or use empty slot in other case
     for (uint8 i = 0; i < MAX_UNIT_ACTION_BAR_INDEX; ++i)
     {
+        //该动作栏槽位没有找到动作，并且动作不属于法术动作栏
         if (!PetActionBar[i].GetAction() && PetActionBar[i].IsActionBarForSpell())
         {
             SetActionBar(i, spell_id, newstate == ACT_DECIDE ? spellInfo->IsAutocastable() ? ACT_DISABLED : ACT_PASSIVE : newstate);
@@ -17619,17 +17696,25 @@ Pet* Unit::CreateTamedPetFrom(uint32 creatureEntry, uint32 spell_id)
     return pet;
 }
 
+//初始化已驯服的宠物
 bool Unit::InitTamedPet(Pet* pet, uint8 level, uint32 spell_id)
 {
+    //当前单位转换为玩家
     Player* player = ToPlayer();
+    //获取或初始化玩家的宠物栏
     PetStable& petStable = player->GetOrInitPetStable();
+    //如果当前已经有宠物或者有未分配插槽的猎人宠物
     if (petStable.CurrentPet || petStable.GetUnslottedHunterPet())
         return false;
 
+    //设置宠物的创建者GUID
     pet->SetCreatorGUID(GetGUID());
+    //设置宠物的阵营
     pet->SetFaction(GetFaction());
+    //设置宠物技能
     pet->SetUInt32Value(UNIT_CREATED_BY_SPELL, spell_id);
 
+    //如果当前单位的类型是玩家，则将宠物的所有单位表示替换为有玩家控制
     if (GetTypeId() == TYPEID_PLAYER)
         pet->ReplaceAllUnitFlags(UNIT_FLAG_PLAYER_CONTROLLED);
 
@@ -17639,10 +17724,15 @@ bool Unit::InitTamedPet(Pet* pet, uint8 level, uint32 spell_id)
         return false;
     }
 
+    //设置宠物编号
     pet->GetCharmInfo()->SetPetNumber(sObjectMgr->GeneratePetNumber(), true);
     // this enables pet details window (Shift+P)
+
+    //初始化宠物的创建法术
     pet->InitPetCreateSpells();
+    //设置宠物满血状态
     pet->SetFullHealth();
+    //填充宠物信息，将宠物信息存储在宠物栏中
     pet->FillPetInfo(&petStable.CurrentPet.emplace());
     return true;
 }
