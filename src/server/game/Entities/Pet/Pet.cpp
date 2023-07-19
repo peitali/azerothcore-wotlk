@@ -159,34 +159,55 @@ public:
     }
 };
 
+/**
+ * 加载宠物信息
+ * @param stable 玩家宠物栏
+ * @param petEntry 宠物entry
+ * @param petnumber 宠物编号
+ * @param current 是否当前宠物
+ * @return
+ */
 std::pair<PetStable::PetInfo const*, PetSaveMode> Pet::GetLoadPetInfo(PetStable const& stable, uint32 petEntry, uint32 petnumber, bool current)
 {
+    //如果宠物编号存在
     if (petnumber)
     {
         // Known petnumber entry
+        //如果当前宠物与指定宠物编号相同，则返回当前宠物信息和宠物存储模式为当前宠物；否则继续查找
         if (stable.CurrentPet && stable.CurrentPet->PetNumber == petnumber)
             return { &stable.CurrentPet.value(), PET_SAVE_AS_CURRENT };
 
+        //接着在已存储宠物列表中查找指定宠物编号的宠物，如果找到了则返回宠物信息和宠物存储模式为第一个存储槽；否则继续查找。
         for (std::size_t stableSlot = 0; stableSlot < stable.StabledPets.size(); ++stableSlot)
             if (stable.StabledPets[stableSlot] && stable.StabledPets[stableSlot]->PetNumber == petnumber)
                 return { &stable.StabledPets[stableSlot].value(), PetSaveMode(PET_SAVE_FIRST_STABLE_SLOT + stableSlot) };
 
+        //最后在未存储宠物列表中查找指定宠物编号的宠物，如果找到了则返回宠物信息和宠物存储模式为未存储槽。
+        //整个代码是通过循环遍历宠物列表来查找指定宠物编号的宠物，并返回相应的宠物信息和宠物存储模式。
         for (PetStable::PetInfo const& pet : stable.UnslottedPets)
             if (pet.PetNumber == petnumber)
                 return { &pet, PET_SAVE_NOT_IN_SLOT };
     }
+    //是否当前宠物？（还未明白这个bool的具体含义）
     else if (current)
     {
         // Current pet (slot 0)
+        //是否存在当前宠物
         if (stable.CurrentPet)
+            //表示将该宠物保存为当前宠物
             return { &stable.CurrentPet.value(), PET_SAVE_AS_CURRENT };
     }
+    //是否有宠物entry
     else if (petEntry)
     {
         // known petEntry entry (unique for summoned pet, but non unique for hunter pet (only from current or not stabled pets)
+        //（已知宠物条目(召唤宠物唯一，但猎人宠物非唯一(仅适用于当前或非马厩宠物)）
+
+        //检查当前的宠物是否与petEntry相同，如果是，则返回当前宠物和PET_SAVE_AS_CURRENT
         if (stable.CurrentPet && stable.CurrentPet->CreatureId == petEntry)
             return { &stable.CurrentPet.value(), PET_SAVE_AS_CURRENT };
 
+        //如果不是，则遍历所有未装备的宠物，如果找到与petEntry相同的宠物，则返回该宠物和PET_SAVE_NOT_IN_SLOT
         for (PetStable::PetInfo const& pet : stable.UnslottedPets)
             if (pet.CreatureId == petEntry)
                 return { &pet, PET_SAVE_NOT_IN_SLOT };
@@ -194,29 +215,46 @@ std::pair<PetStable::PetInfo const*, PetSaveMode> Pet::GetLoadPetInfo(PetStable 
     else
     {
         // Any current or other non-stabled pet (for hunter "call pet")
+        //（任何现有或其他非马厩宠物(猎人称为“宠物”)）
+
+        //检查是否有当前宠物
         if (stable.CurrentPet)
+            //返回当前宠物和PET_SAVE_AS_CURRENT
             return { &stable.CurrentPet.value(), PET_SAVE_AS_CURRENT };
 
+        //没有当前宠物，则检查是否有未装备的宠物
         if (!stable.UnslottedPets.empty())
+            //如果有未装备的宠物，则返回第一个未装备的宠物和PET_SAVE_NOT_IN_SLOT
             return { &stable.UnslottedPets.front(), PET_SAVE_NOT_IN_SLOT };
     }
 
     return { nullptr, PET_SAVE_AS_DELETED };
 }
 
+/**
+ * 从db加载宠物
+ * @param owner 宠物所有者
+ * @param petEntry  宠物entry
+ * @param petnumber  宠物编号
+ * @param current  当前宠物标志
+ * @param healthPct 宠物的健康百分比
+ * @return
+ */
 bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool current, uint32 healthPct /*= 0*/)
 {
+    //设置宠物加载状态
     m_loading = true;
 
     //获取owner的宠物栏，获取的指针为空则直接返回false
     PetStable* petStable = ASSERT_NOTNULL(owner->GetPetStable());
 
-    //获取owner的GUID
+    //获取宠物所有者的GUID
     ObjectGuid::LowType ownerid = owner->GetGUID().GetCounter();
     //加载pet信息 owner的pet栏 ，pet entry，pet编号，
     std::pair<PetStable::PetInfo const*, PetSaveMode> info = GetLoadPetInfo(*petStable, petEntry, petnumber, current);
     PetStable::PetInfo const* petInfo = info.first;
     PetSaveMode slot = info.second;
+    //获取的宠物信息为空
     if (!petInfo)
     {
         m_loading = false;
@@ -224,55 +262,81 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
     }
 
     // Don't try to reload the current pet
-    //不要尝试重新加载当前宠物
+    //（不要尝试重新加载当前宠物）
+    // 如果当前宠物已经存在，并且宠物栏的当前宠物编号与要加载的宠物编号相同，则直接返回false
     if (petStable->CurrentPet && owner->GetPet() && petStable->CurrentPet.value().PetNumber == petInfo->PetNumber)
         return false;
 
     // we are loading pet at that moment
+    //如果宠物所有者是观察者，或者已经有宠物，或者不在世界中，或者没有找到地图，则返回false。
     if (owner->IsSpectator() || owner->GetPet() || !owner->IsInWorld() || !owner->FindMap())
         return false;
 
     bool forceLoadFromDB = false;
+    //从db加载宠物之前执行，应该是个hook
     sScriptMgr->OnBeforeLoadPetFromDB(owner, petEntry, petnumber, current, forceLoadFromDB);
 
+    //如果forceLoadFromDB为false且owner的类为CLASS_DEATH_KNIGHT且owner不能看到死亡骑士宠物，则返回false。
+    //当玩家职业为死亡骑士，且玩家不能看到死亡骑士宠物时
     if (!forceLoadFromDB && (owner->getClass() == CLASS_DEATH_KNIGHT && !owner->CanSeeDKPet())) // DK Pet exception
         return false;
 
+    //通过sSpellMgr的GetSpellInfo函数获取petInfo->CreatedBySpellId对应的SpellInfo。
+    //petInfo->CreatedBySpellId 应该为触发召唤宠物的那个技能id
     SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(petInfo->CreatedBySpellId);
 
+    //临时变量记录 spellInfo存在且spellInfo的持续时间大于0。
     bool isTemporarySummon = spellInfo && spellInfo->GetDuration() > 0;
+    //如果current为true且isTemporarySummon为true，则返回false
     if (current && isTemporarySummon)
         return false;
 
+    //如果宠物信息的类型为猎人宠物
     if (petInfo->Type == HUNTER_PET)
     {
+        //通过宠物信息的生物id获取获取生物模板
         CreatureTemplate const* creatureInfo = sObjectMgr->GetCreatureTemplate(petInfo->CreatureId);
+
+        //如果creatureInfo不存在或者creatureInfo不可驯服（根据owner是否能驯服异种宠物判断），则返回false。
         if (!creatureInfo || !creatureInfo->IsTameable(owner->CanTameExoticPets()))
             return false;
     }
 
+    //如果current为true且owner的宠物需要暂时解散，
     if (current && owner->IsPetNeedBeTemporaryUnsummoned())
     {
+        //则设置owner的TemporaryUnsummonedPetNumber为petInfo->PetNumber，并返回false
+        //此处应该会解散宠物，可能是因为current为true
         owner->SetTemporaryUnsummonedPetNumber(petInfo->PetNumber);
         return false;
     }
 
+    //获取owner所在的地图
     Map* map = owner->GetMap();
+    //通过地图的GenerateLowGuid函数生成一个唯一标识符guid。
     ObjectGuid::LowType guid = map->GenerateLowGuid<HighGuid::Pet>();
 
+    //创建宠物，如果创建失败，则返回false
     if (!Create(guid, map, owner->GetPhaseMask(), petInfo->CreatureId, petInfo->PetNumber))
         return false;
 
+    //设置宠物的类型为该宠物信息的类型
     setPetType(petInfo->Type);
+    //设置宠物的阵营为所有者的阵营
     SetFaction(owner->GetFaction());
+    //设置宠物的UNIT_CREATED_BY_SPELL值为petInfo->CreatedBySpellId
     SetUInt32Value(UNIT_CREATED_BY_SPELL, petInfo->CreatedBySpellId);
 
+    //如果是小动物
     if (IsCritter())
     {
+        //定义了三个浮点型变量px、py和pz。然后，通过owner->GetClosePoint()函数获取与宠物相关的坐标点(px, py, pz)。
         float px, py, pz;
         owner->GetClosePoint(px, py, pz, GetCombatReach(), PET_FOLLOW_DIST, GetFollowAngle());
+        //通过Relocate()函数将宠物的位置重新定位到获取的坐标点(px, py, pz)，并使用owner->GetOrientation()函数获取宠物的朝向。
         Relocate(px, py, pz, owner->GetOrientation());
 
+        //检查宠物的新位置是否有效
         if (!IsPositionValid())
         {
             LOG_ERROR("entities.pet", "Pet{} not loaded. Suggested coordinates isn't valid (X: {} Y: {})",
@@ -280,64 +344,98 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
             return false;
         }
 
+        //如果位置有效，则调用UpdatePositionData()函数更新宠物的位置数据
         UpdatePositionData();
+        //将宠物添加到地图中。
         map->AddToMap(ToCreature(), true);
         return true;
     }
 
+    //如果宠物类型是HUNTER_PET（猎人宠物）或者宠物的模板类型是CREATURE_TYPE_DEMON（恶魔）或CREATURE_TYPE_UNDEAD（亡灵）
     if (getPetType() == HUNTER_PET || GetCreatureTemplate()->type == CREATURE_TYPE_DEMON || GetCreatureTemplate()->type == CREATURE_TYPE_UNDEAD)
+        //(显示宠物详细信息标签(Shift+P)只对猎人宠物，恶魔或亡灵)
         GetCharmInfo()->SetPetNumber(petInfo->PetNumber, IsPermanentPetFor(owner)); // Show pet details tab (Shift+P) only for hunter pets, demons or undead
     else
         GetCharmInfo()->SetPetNumber(petInfo->PetNumber, false);
 
+    //设置宠物的显示ID（应该是外观id）
     SetDisplayId(petInfo->DisplayId);
+    //设置宠物的原生（出生？）显示ID。
     SetNativeDisplayId(petInfo->DisplayId);
+    //更新宠物的位置数据
     UpdatePositionData();
+    //获取宠物等级
     uint8 petlevel = petInfo->Level;
+    //取消宠物的npc标志
     ReplaceAllNpcFlags(UNIT_NPC_FLAG_NONE);
+    //设置宠物的名字
     SetName(petInfo->Name);
 
+    //获取宠物的类型
     switch (getPetType())
     {
+        //如果是召唤宠物
         case SUMMON_PET:
+            //获取主人的等级
             petlevel = owner->GetLevel();
 
+            //宠物是否是Ghoul（食尸鬼？）
             if (IsPetGhoul())
+                //UNIT_FIELD_BYTES_0设置为0x400（表示职业盗贼）
                 SetUInt32Value(UNIT_FIELD_BYTES_0, 0x400); // class = rogue
             else
+                //表示职业法师
                 SetUInt32Value(UNIT_FIELD_BYTES_0, 0x800); // class = mage
-
+            //（这将启用弹出窗口(宠物解散，取消)）
+            //替换所有的UnitFlags为UNIT_FLAG_PLAYER_CONTROLLED，这样可以弹出窗口（宠物解散、取消）
             ReplaceAllUnitFlags(UNIT_FLAG_PLAYER_CONTROLLED); // this enables popup window (pet dismiss, cancel)
             break;
+        //如果是猎人宠物
         case HUNTER_PET:
+            // 将UNIT_FIELD_BYTES_0的值设置为0x02020100（代表职业是战士，性别是无，能量是集中）
             SetUInt32Value(UNIT_FIELD_BYTES_0, 0x02020100); // class = warrior, gender = none, power = focus
+            //设置宠物的武器状态为SHEATH_STATE_MELEE
             SetSheath(SHEATH_STATE_MELEE);
+            //根据宠物是否被重命名，设置UNIT_FIELD_BYTES_2的第二位标志为UNIT_CAN_BE_ABANDONED或UNIT_CAN_BE_RENAMED | UNIT_CAN_BE_ABANDONED
             SetByteFlag(UNIT_FIELD_BYTES_2, 2, petInfo->WasRenamed ? UNIT_CAN_BE_ABANDONED : UNIT_CAN_BE_RENAMED | UNIT_CAN_BE_ABANDONED);
 
+            // 替换所有的UnitFlags为UNIT_FLAG_PLAYER_CONTROLLED，这样可以弹出窗口（宠物放弃、取消）
             ReplaceAllUnitFlags(UNIT_FLAG_PLAYER_CONTROLLED);
-                                                            // this enables popup window (pet abandon, cancel)
+            // this enables popup window (pet abandon, cancel)
+
+            //设置宠物的最大能量为POWER_HAPPINESS，并将其初始能量设置为petInfo->Happiness(幸福值？)
             SetMaxPower(POWER_HAPPINESS, GetCreatePowers(POWER_HAPPINESS));
             SetPower(POWER_HAPPINESS, petInfo->Happiness);
             setPowerType(POWER_FOCUS);
             break;
         default:
+            //如果宠物类型不是上述两种类型，并且不是Ghoul类型，则输出错误日志。
             if (!IsPetGhoul())
                 LOG_ERROR("entities.pet", "Pet have incorrect type ({}) for pet loading.", getPetType());
             break;
     }
 
+    //设置宠物的名称时间戳，使用了当前游戏时间的计数
     SetUInt32Value(UNIT_FIELD_PET_NAME_TIMESTAMP, uint32(GameTime::GetGameTime().count())); // cast can't be helped here
+    //设置宠物的创建者GUID，即宠物的主人
     SetCreatorGUID(owner->GetGUID());
 
+    //宠物的等级初始化它的属性
     InitStatsForLevel(petlevel);
+    //设置宠物的经验值
     SetUInt32Value(UNIT_FIELD_PETEXPERIENCE, petInfo->Experience);
 
+    //将宠物的等级与主人进行同步
     SynchronizeLevelWithOwner();
 
     // Set pet's position after setting level, its size depends on it
+    //(设置水平后设置宠物的位置，它的大小取决于它)
     float px, py, pz;
+    //获取宠物跟随主人的位置坐标
     owner->GetClosePoint(px, py, pz, GetCombatReach(), PET_FOLLOW_DIST, GetFollowAngle());
+    //将宠物的位置重新定位到获取的坐标，并使用主人的朝向
     Relocate(px, py, pz, owner->GetOrientation());
+    //检查宠物的位置是否有效，如果无效则输出错误日志并返回false
     if (!IsPositionValid())
     {
         LOG_ERROR("entities.pet", "Pet {} not loaded. Suggested coordinates isn't valid (X: {} Y: {})",
@@ -345,51 +443,77 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
         return false;
     }
 
+    //设置宠物的反应状态
     SetReactState(petInfo->ReactState);
+    //设置宠物的属性是否可修改
     SetCanModifyStats(true);
 
     // set current pet as current
     // 0=current
     // 1..MAX_PET_STABLES in stable slot
     // PET_SAVE_NOT_IN_SLOT(100) = not stable slot (summoning))
+
+    //表示宠物没有被稳定(槽位处于召唤中？)，需要从未稳定区中选中一个宠物作为当前宠物
+    //将宠物从未装备槽中移动到当前宠物槽中
     if (slot == PET_SAVE_NOT_IN_SLOT)
     {
+        // 获取petInfo的宠物编号，并将其存储在变量petInfoNumber中
         uint32 petInfoNumber = petInfo->PetNumber;
+        //检查petStable的CurrentPet是否存在
+        //如果CurrentPet存在，则调用owner的RemovePet函数，将当前宠物从宠物槽中移除
         if (petStable->CurrentPet)
             owner->RemovePet(nullptr, PET_SAVE_NOT_IN_SLOT);
 
+        // 使用std::find_if函数在petStable的UnslottedPets容器中查找满足条件的宠物。
+        //条件是unslottedPet的宠物编号与petInfoNumber相等。
         auto unslottedPetItr = std::find_if(petStable->UnslottedPets.begin(), petStable->UnslottedPets.end(), [&](PetStable::PetInfo const& unslottedPet)
         {
             return unslottedPet.PetNumber == petInfoNumber;
         });
 
+        //确保CurrentPet不存在。
         ASSERT(!petStable->CurrentPet);
+        //确保找到了unslottedPetItr指向的有效元素。
         ASSERT(unslottedPetItr != petStable->UnslottedPets.end());
 
+        // 将unslottedPetItr指向的宠物移动到petStable的CurrentPet中。
         petStable->CurrentPet = std::move(*unslottedPetItr);
+        //从petStable的UnslottedPets容器中删除unslottedPetItr指向的宠物。
         petStable->UnslottedPets.erase(unslottedPetItr);
 
         // old petInfo pointer is no longer valid, refresh it
+        //(旧的petInfo指针不再有效，请刷新它)
+        // 更新petInfo指针，使其指向petStable的CurrentPet的值。
         petInfo = &petStable->CurrentPet.value();
     }
+    //传入槽位在1-4之间（此槽位之间应该是稳定的）
     else if (PET_SAVE_FIRST_STABLE_SLOT <= slot && slot <= PET_SAVE_LAST_STABLE_SLOT)
     {
+
+        //使用  std::find_if  函数在  petStable->StabledPets  容器中查找满足特定条件的宠物。
+        // 该条件是一个 lambda 表达式，它会检查宠物是否存在且宠物编号是否与给定的  petnumber  相等。
         auto stabledPet = std::find_if(petStable->StabledPets.begin(), petStable->StabledPets.end(), [petnumber](Optional<PetStable::PetInfo> const& pet)
         {
             return pet && pet->PetNumber == petnumber;
         });
 
+        //断言确保找到了满足条件的宠物。如果断言失败，表示未找到满足条件的宠物
         ASSERT(stabledPet != petStable->StabledPets.end());
 
+        //使用  std::swap  函数交换找到的满足条件的宠物和当前宠物之间的位
         std::swap(*stabledPet, petStable->CurrentPet);
 
         // old petInfo pointer is no longer valid, refresh it
+        //刷新  petInfo  指针，将其指向交换后的当前宠物的值。这是因为交换后，旧的  petInfo  指针不再有效
         petInfo = &petStable->CurrentPet.value();
     }
 
     // Send fake summon spell cast - this is needed for correct cooldown application for spells
     // Example: 46584 - without this cooldown (which should be set always when pet is loaded) isn't set clientside
     /// @todo pets should be summoned from real cast instead of just faking it?
+
+    //发送一个虚假的召唤法术施放，用于正确应用法术的冷却时间
+    //检查宠物信息中是否存在CreatedBySpellId（应该是召唤该宠物的法术ID）
     if (petInfo->CreatedBySpellId)
     {
         WorldPacket data(SMSG_SPELL_GO, (8 + 8 + 4 + 4 + 2));
@@ -402,59 +526,103 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
         owner->SendMessageToSet(&data, true);
     }
 
+    //将当前宠物设置为owner的随从
     owner->SetMinion(this, true);
 
+    //如果宠物不是临时召唤的，则加载宠物的动作条
+    // todo pl
     if (!isTemporarySummon)
         m_charmInfo->LoadPetActionBar(petInfo->ActionBar);
 
+    //将宠物添加到地图中
     map->AddToMap(ToCreature(), true);
 
     //set last used pet number (for use in BG's)
+    //(设置最后使用的宠物编号(用于BG))
+    // 如果owner是玩家类型，并且宠物是受控制的、非临时召唤的，并且宠物类型是SUMMON_PET或HUNTER_PET，
+    // 则将宠物编号设置为owner的最后一个宠物编号
     if (owner->GetTypeId() == TYPEID_PLAYER && isControlled() && !isTemporarySummoned() && (getPetType() == SUMMON_PET || getPetType() == HUNTER_PET))
         owner->ToPlayer()->SetLastPetNumber(petInfo->PetNumber);
 
+    /**
+     * 这段代码的作用是将一个查询操作添加到会话中，并在查询完成后执行一个回调函数。
+         代码的步骤如下：
+        1. 使用owner对象的GetSession()方法获取会话对象。
+        2. 使用CharacterDatabase.DelayQueryHolder方法创建一个延迟查询操作对象，并传入一个PetLoadQueryHolder对象作为参数。PetLoadQueryHolder对象的构造函数接受ownerid和petInfo->PetNumber作为参数。
+        3. 调用AddQueryHolderCallback方法将延迟查询操作对象添加到会话中。
+        4. 调用AfterComplete方法设置一个回调函数。回调函数接受一个SQLQueryHolderBase对象作为参数。
+        5. 回调函数中的代码使用lambda表达式捕获了一些变量，包括this指针、owner对象、session对象、isTemporarySummon变量、current变量、petInfo->LastSaveTime变量、petInfo->Health变量、petInfo->Mana变量和healthPct变量。
+        6. 在回调函数中执行一些操作，具体操作内容未提供。
+     */
     owner->GetSession()->AddQueryHolderCallback(CharacterDatabase.DelayQueryHolder(std::make_shared<PetLoadQueryHolder>(ownerid, petInfo->PetNumber)))
         .AfterComplete([this, owner, session = owner->GetSession(), isTemporarySummon, current, lastSaveTime = petInfo->LastSaveTime, savedhealth = petInfo->Health, savedmana = petInfo->Mana, healthPct]
         (SQLQueryHolderBase const& holder)
     {
+        //如果当前回话的玩家不是宠物的owner或者owner获取的宠物不是当前宠物
+        //（不知道为什么要这样判断，容错吗？）
         if (session->GetPlayer() != owner || owner->GetPet() != this)
             return;
 
         // passing previous checks ensure that 'this' is still valid
+        //（通过先前的检查确保'this'仍然有效）
         if (m_removed)
             return;
 
+        //（在法术加载前设置原始天赋点数）
         InitTalentForLevel(); // set original talents points before spell loading
 
+        //计算时间差，通过获取当前游戏时间与上次保存时间的差值。
         uint32 timediff = uint32(GameTime::GetGameTime().count() - lastSaveTime);
+        //加载宠物的光环数据
         _LoadAuras(holder.GetPreparedResult(PetLoadQueryHolder::AURAS), timediff);
 
         // load action bar, if data broken will fill later by default spells.
+        //（加载动作条，如果数据被破坏，将稍后填充默认的法术。） todo pl 此处验证过
+        //如果宠物不是临时召唤的
         if (!isTemporarySummon)
         {
+            //加载宠物的技能数据
             _LoadSpells(holder.GetPreparedResult(PetLoadQueryHolder::SPELLS));
+            //重新初始化天赋以检查天赋计数。
             InitTalentForLevel(); // re-init to check talent count
+            //加载宠物的技能冷却数据。
             _LoadSpellCooldowns(holder.GetPreparedResult(PetLoadQueryHolder::COOLDOWNS));
+            //学习宠物的被动技能
             LearnPetPassives();
+            //初始化宠物在当前等级下可以学习的技能。
             InitLevelupSpellsForLevel();
+            //如果当前地图是战斗竞技场，调用RemoveArenaAuras()函数，移除宠物的竞技场光环
             if (GetMap()->IsBattleArena())
                 RemoveArenaAuras();
 
+            //施放宠物的光环技能
             CastPetAuras(current);
         }
 
+        //（加载后从操作栏移除未知的法术）
         CleanupActionBar();                                     // remove unknown spells from action bar after load
 
         LOG_DEBUG("entities.pet", "New Pet has {}", GetGUID().ToString());
 
+        //初始化owner的宠物法术
         owner->PetSpellInitialize();
+        //向所有人发送天赋信息数据
         owner->SendTalentsInfoData(true);
 
+        //如果owner有所属的团队
         if (owner->GetGroup())
+            //则设置owner的GroupUpdateFlag为GROUP_UPDATE_PET。
             owner->SetGroupUpdateFlag(GROUP_UPDATE_PET);
 
+        // 如果宠物类型是HUNTER_PET（猎人宠物）
         if (getPetType() == HUNTER_PET)
         {
+            /**
+             * 使用PreparedQueryResult类型的result变量来获取PetLoadQueryHolder::DECLINED_NAMES的预处理查询结果
+             *  b. 创建一个唯一指针类型的m_declinedname变量，指向DeclinedName类型的对象。
+                c. 从result中获取字段（Field）数据，并将其赋值给fields变量。
+                d. 使用循环遍历，将fields中的数据逐个赋值给m_declinedname的name数组中的元素。
+             */
             if (PreparedQueryResult result = holder.GetPreparedResult(PetLoadQueryHolder::DECLINED_NAMES))
             {
                 m_declinedname = std::make_unique<DeclinedName>();
@@ -465,11 +633,15 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
         }
 
         uint32 curHealth = savedhealth;
+        //如果healthPct不为0（即非空），则通过CountPctFromMaxHealth函数计算出curHealth的百分比值
         if (healthPct)
         {
             curHealth = CountPctFromMaxHealth(healthPct);
         }
 
+        //（所有(?)召唤宠物在被召唤时会满血，但在当前状态时不会满血）
+        //如果当前宠物的类型是召唤宠物，并且不是当前状态
+        //设置满血满能量
         if (getPetType() == SUMMON_PET && !current) //all (?) summon pets come with full health when called, but not when they are current
         {
             SetPower(POWER_MANA, GetMaxPower(POWER_MANA));
@@ -477,7 +649,10 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
         }
         else
         {
+            //如果curHealth为0且类型为猎人宠物
+            //表示当前宠物是猎人的宠物并且已经死亡
             if (!curHealth && getPetType() == HUNTER_PET)
+                //将死亡状态设置为JUST_DIED
                 setDeathState(JUST_DIED);
             else
             {
@@ -489,6 +664,8 @@ bool Pet::LoadPetFromDB(Player* owner, uint32 petEntry, uint32 petnumber, bool c
         // must be after SetMinion (owner guid check)
         //LoadTemplateImmunities();
         //LoadMechanicTemplateImmunity();
+
+        //设置宠物加载状态为false
         m_loading = false;
     });
 
