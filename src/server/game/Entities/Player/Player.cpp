@@ -8806,18 +8806,24 @@ void Player::ResetPetTalents()
     SendTalentsInfoData(true);
 }
 
+//获取玩家(当前?)宠物（第0个召唤插槽）
 Pet* Player::GetPet() const
 {
+    //检查是否存在一个宠物的唯一标识（pet_guid）
     if (ObjectGuid pet_guid = GetPetGUID())
     {
+        //如果获取到的pet_guid不是宠物，返回空指针
         if (!pet_guid.IsPet())
             return nullptr;
 
+        //通过pet_guid获取宠物对象
         Pet* pet = ObjectAccessor::GetPet(*this, pet_guid);
 
+        //如果获取到的宠物对象为空，返回空指针
         if (!pet)
             return nullptr;
 
+        //验证玩家是否处于世界中
         if (IsInWorld())
             return pet;
 
@@ -9427,8 +9433,10 @@ void Player::Whisper(uint32 textId, Player* target, bool /*isBossWhisper = false
     target->SendDirectMessage(&data);
 }
 
+//初始化玩家的宠物法术信息，并将其发送给客户端
 void Player::PetSpellInitialize()
 {
+    //获取玩家(当前的？/召唤出来的？)的宠物对象
     Pet* pet = GetPet();
 
     if (!pet)
@@ -9436,55 +9444,84 @@ void Player::PetSpellInitialize()
 
     LOG_DEBUG("entities.pet", "Pet Spells Groups");
 
+    //获取宠物的魅力信息
+    //目前不明白魅力的含义，可能是驯服宠物的相关信息（如，宠物技能，控制信息等）
     CharmInfo* charmInfo = pet->GetCharmInfo();
 
+    //创建一个WorldPacket对象，用于存储宠物法术信息的数据包
     WorldPacket data(SMSG_PET_SPELLS, 8 + 2 + 4 + 4 + 4 * MAX_UNIT_ACTION_BAR_INDEX + 1 + 1);
+    //将宠物的GUID添加到数据包中
     data << pet->GetGUID();
+    // 将宠物的种族ID添加到数据包中
     data << uint16(pet->GetCreatureTemplate()->family);         // creature family (required for pet talents)
+    //将宠物的持续时间添加到数据包中
     data << uint32(pet->GetDuration().count());
+    //将宠物的反应状态添加到数据包中。
     data << uint8(pet->GetReactState());
+    //将宠物的指令状态添加到数据包中
     data << uint8(charmInfo->GetCommandState());
+    //将标志位添加到数据包中
     data << uint16(0); // Flags, mostly unknown
 
     // action bar loop
+    //构建宠物的动作条信息并添加到数据包中
     charmInfo->BuildActionBar(&data);
 
+    // 记录数据包中记录法术数量的位置
     size_t spellsCountPos = data.wpos();
 
     // spells count
+    //添加一个占位符来存储法术数量
     uint8 addlist = 0;
     data << uint8(addlist);                                 // placeholder
 
+    //如果宠物是玩家的永久宠物，则遍历宠物的法术列表
     if (pet->IsPermanentPetFor(this))
     {
         // spells loop
         for (PetSpellMap::iterator itr = pet->m_spells.begin(); itr != pet->m_spells.end(); ++itr)
         {
+            //如果法术的状态为PETSPELL_REMOVED，则跳过
             if (itr->second.state == PETSPELL_REMOVED)
                 continue;
 
+            //将法术ID和法术激活状态添加到数据包中
             data << uint32(MAKE_UNIT_ACTION_BUTTON(itr->first, itr->second.active));
+            //更新法术数量。
             ++addlist;
         }
     }
 
+    //将法术数量写入数据包中
     data.put<uint8>(spellsCountPos, addlist);
 
+    //获取宠物的法术冷却时间数量
     uint8 cooldownsCount = pet->m_CreatureSpellCooldowns.size();
+    // 将冷却时间数量添加到数据包中
     data << uint8(cooldownsCount);
 
+    // 获取当前游戏时间
     uint32 curTime = GameTime::GetGameTimeMS().count();
+    //获取无限冷却延迟检查时间。
+    // (暂不明白无限冷却时间在这里处理的含义)
     uint32 infTime = GameTime::GetGameTimeMS().count() + infinityCooldownDelayCheck;
 
+    //遍历宠物的法术冷却时间列表。
     for (CreatureSpellCooldowns::const_iterator itr = pet->m_CreatureSpellCooldowns.begin(); itr != pet->m_CreatureSpellCooldowns.end(); ++itr)
     {
+        //获取法术的分类。
         uint16 category = itr->second.category;
+        //获取法术的冷却时间。如果冷却时间大于当前时间，则计算剩余冷却时间,否则设为0
         uint32 cooldown = (itr->second.end > curTime) ? itr->second.end - curTime : 0;
 
+        //将法术ID添加到数据包中。
         data << uint32(itr->first);                         // spellid
+        //将法术分类添加到数据包中。
         data << uint16(itr->second.category);               // spell category
 
         // send infinity cooldown in special format
+        //(以特殊格式发送无限冷却时间)
+        //如果冷却时间大于等于无限冷却时间，则将特殊格式的无限冷却时间添加到数据包中
         if (itr->second.end >= infTime)
         {
             data << uint32(1);                              // cooldown
@@ -9492,10 +9529,12 @@ void Player::PetSpellInitialize()
             continue;
         }
 
+        //否则，将法术的冷却时间和分类冷却时间添加到数据包中。
         data << uint32(category ? 0 : cooldown);            // cooldown
         data << uint32(category ? cooldown : 0);            // category cooldown
     }
 
+    //将数据包发送给客户端
     GetSession()->SendPacket(&data);
 }
 

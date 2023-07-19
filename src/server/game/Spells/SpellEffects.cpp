@@ -3086,122 +3086,172 @@ void Spell::EffectEnchantItemTmp(SpellEffIndex effIndex)
     itemTarget->ClearSoulboundTradeable(item_owner);
 }
 
+//驯服宠物法术效果
 void Spell::EffectTameCreature(SpellEffIndex /*effIndex*/)
 {
+    //检查effectHandleMode是否为SPELL_EFFECT_HANDLE_HIT_TARGET（应该为击中目标），如果不是，则返回
     if (effectHandleMode != SPELL_EFFECT_HANDLE_HIT_TARGET)
         return;
 
+    //检查m_caster（应该是施法者）是否已经有宠物，如果有，则返回
     if (m_caster->GetPetGUID())
         return;
 
+    //验证unitTarget（应该是当前目标）是否存在
     if (!unitTarget)
         return;
 
+    //检查unitTarget的类型是否为TYPEID_UNIT
     if (unitTarget->GetTypeId() != TYPEID_UNIT)
         return;
 
+    //将unitTarget转换为Creature类型，并将结果赋值给creatureTarget
     Creature* creatureTarget = unitTarget->ToCreature();
 
+    //检查creatureTarget是否为宠物
     if (creatureTarget->IsPet())
         return;
 
+    //检查m_caster的职业是否为猎人
     if (m_caster->getClass() != CLASS_HUNTER)
         return;
 
     // cast finish successfully
     //SendChannelUpdate(0);
+    //调用finish()函数，表示施法完成
     finish();
 
+    //为施法者创建一个“驯服宠物”，通过目标生物和当前技能id
     Pet* pet = m_caster->CreateTamedPetFrom(creatureTarget, m_spellInfo->Id);
     if (!pet)                                               // in very specific state like near world end/etc.
         return;
 
     // "kill" original creature
+    //（“杀死”原始生物）
+    //是驯服了怪物以后，会把目标怪物给杀死
     creatureTarget->DespawnOrUnsummon();
 
+    // 根据creatureTarget的等级和m_caster的等级，计算出一个等级值，赋值给level。
     uint8 level = (creatureTarget->GetLevel() < (m_caster->GetLevel() - 5)) ? (m_caster->GetLevel() - 5) : creatureTarget->GetLevel();
 
     // prepare visual effect for levelup
+    //(为升级准备视觉效果)
+    //将pet的UNIT_FIELD_LEVEL属性设置为level - 1，为升级的可视效果做准备。
     pet->SetUInt32Value(UNIT_FIELD_LEVEL, level - 1);
 
     // add to world
+    //将pet添加到世界地图中
     pet->GetMap()->AddToMap(pet->ToCreature(), true);
 
     // visual effect for levelup
+    //将pet的UNIT_FIELD_LEVEL属性设置为level，显示升级的可视效果
     pet->SetUInt32Value(UNIT_FIELD_LEVEL, level);
 
     // caster have pet now
+    //将pet设置为m_caster的仆从
     m_caster->SetMinion(pet, true);
 
+    //初始化pet的天赋。
     pet->InitTalentForLevel();
 
+    //如果m_caster的类型为TYPEID_PLAYER（玩家）
     if (m_caster->GetTypeId() == TYPEID_PLAYER)
     {
+        //将pet保存到数据库
         pet->SavePetToDB(PET_SAVE_AS_CURRENT);
+        //调用m_caster的PetSpellInitialize函数(初始化玩家的宠物的法术)
         m_caster->ToPlayer()->PetSpellInitialize();
     }
 }
 
+//召唤宠物法术效果
 void Spell::EffectSummonPet(SpellEffIndex effIndex)
 {
+    //判断法术效果的处理模式是否为 SPELL_EFFECT_HANDLE_HIT，不是则直接返回，不执行任何操作
     if (effectHandleMode != SPELL_EFFECT_HANDLE_HIT)
         return;
 
+    //检查是否原始施法者（是否存在？）
     if (!m_originalCaster)
         return;
 
+    //通过效果索引获取效果的MiscValue，在这里是获取的宠物的模板id
     uint32 petentry = m_spellInfo->Effects[effIndex].MiscValue;
+    //获取该法术的持续时间
     int32 duration = m_spellInfo->GetDuration();
 
+    //如果原始施法者有法术修改所有者，则将法术的持续时间应用于该法术修改所有者（法术修改所有者应该是当前法术施放者）
     if(Player* modOwner = m_originalCaster->GetSpellModOwner())
         modOwner->ApplySpellMod(m_spellInfo->Id, SPELLMOD_DURATION, duration);
 
+    //将原始施法者转换为player类型，
     Player* owner = m_originalCaster->ToPlayer();
+    //如果转换后的owner为空，并且原始施法者是一个图腾
+    //则将owner设置为原始施法者的CharmerOrOwnerPlayerOrPlayerItself（可能是图腾的控制者或所有者）
     if (!owner && m_originalCaster->ToCreature()->IsTotem())
         owner = m_originalCaster->GetCharmerOrOwnerPlayerOrPlayerItself();
 
+    //如果此时owner依然为空
     if (!owner)
     {
+        //通过sSummonPropertiesStore查找id为67的属性，
+        //暂不明白此处的意思
         SummonPropertiesEntry const* properties = sSummonPropertiesStore.LookupEntry(67);
         if (properties)
         {
             // Xinef: unsummon old guardian
+            //如果原始施法者拥有一个守护宠物，则将其解散
             if (Guardian* oldPet = m_originalCaster->GetGuardianPet())
                 oldPet->UnSummon();
+            //召唤守护宠物
             SummonGuardian(effIndex, petentry, properties, 1, false);
         }
         return;
     }
 
+    //获取拥有者的宠物
     Pet* OldSummon = owner->GetPet();
 
     // if pet requested type already exist
+    //如果获取的old宠物存在
     if (OldSummon)
     {
+        //如果技能效果获取到的entry 为0 或者 等于旧宠物的entry
+        //（重新技能召唤当前已经存在的宠物？）
         if (petentry == 0 || OldSummon->GetEntry() == petentry)
         {
             // pet in corpse state can't be summoned
+            // 如果OldSummon处于死亡状态（isDead()为真），则直接返回
             if (OldSummon->isDead())
                 return;
 
+            //OldSummon所在的地图与owner所在的地图相同
             ASSERT(OldSummon->GetMap() == owner->GetMap());
 
             //OldSummon->GetMap()->Remove(OldSummon->ToCreature(), false);
 
             float px, py, pz;
+            //根据OldSummon的尺寸，获取owner附近的一个点(px, py, pz)。
             owner->GetClosePoint(px, py, pz, OldSummon->GetObjectSize());
 
+            //将OldSummon传送至(px, py, pz)的位置
             OldSummon->NearTeleportTo(px, py, pz, OldSummon->GetOrientation());
+            //更新其可见性
             OldSummon->UpdateObjectVisibility();
 
+            //将OldSummon的生命值设置为最大生命值
             OldSummon->SetHealth(OldSummon->GetMaxHealth());
+            //将其能量值设置为最大能量值。
             OldSummon->SetPower(OldSummon->getPowerType(), OldSummon->GetMaxPower(OldSummon->getPowerType()));
             // notify player
+            // 通知拥有者清除OldSummon的法术冷却时间
             for (CreatureSpellCooldowns::const_iterator itr = OldSummon->m_CreatureSpellCooldowns.begin(); itr != OldSummon->m_CreatureSpellCooldowns.end(); ++itr)
                 owner->SendClearCooldown(itr->first, OldSummon);
 
             // actually clear cooldowns
+            //清除OldSummon的法术冷却时间
             OldSummon->m_CreatureSpellCooldowns.clear();
+            //遍历OldSummon所应用的光环，将非被动光环且可以发送给客户端的光环从OldSummon身上移除。
             Unit::AuraApplicationMap& myAuras = OldSummon->GetAppliedAuras();
             for (Unit::AuraApplicationMap::iterator i = myAuras.begin(); i != myAuras.end();)
             {
@@ -3214,42 +3264,57 @@ void Spell::EffectSummonPet(SpellEffIndex effIndex)
             return;
         }
 
+        // 如果owner的类型是玩家（TYPEID_PLAYER），则从玩家的宠物列表中移除OldSummon。
         if (owner->GetTypeId() == TYPEID_PLAYER)
             owner->ToPlayer()->RemovePet(OldSummon, PET_SAVE_NOT_IN_SLOT, false);
         else
             return;
     }
 
+    //获取owner对象的位置和大小返回最近的点的坐标，并将结果赋值给x、y、z变量
     float x, y, z;
     owner->GetClosePoint(x, y, z, owner->GetObjectSize());
+    //在指定位置召唤宠物
     Pet* pet = owner->SummonPet(petentry, x, y, z, owner->GetOrientation(), SUMMON_PET);
+    //如果召唤的pet为空，则返回
     if (!pet)
         return;
 
+    //如果m_caster的类型是TYPEID_UNIT
     if (m_caster->GetTypeId() == TYPEID_UNIT)
     {
+        //如果m_caster是一个图腾，则将pet的反应状态设置为REACT_AGGRESSIVE(攻击？)
+        // 否则设置为REACT_DEFENSIVE（防御？）
         if (m_caster->ToCreature()->IsTotem())
             pet->SetReactState(REACT_AGGRESSIVE);
         else
             pet->SetReactState(REACT_DEFENSIVE);
     }
 
+    //将pet的UNIT_CREATED_BY_SPELL属性设置为当前法术的Id（此法术应该为召唤该宠物的法术本身的id）
     pet->SetUInt32Value(UNIT_CREATED_BY_SPELL, m_spellInfo->Id);
 
     // Reset cooldowns
+    //如果owner的职业不是猎人
     if (owner->getClass() != CLASS_HUNTER)
     {
+        //重置pet的技能冷却时间
         pet->m_CreatureSpellCooldowns.clear();
+        //初始化宠物的技能
         owner->PetSpellInitialize();
     }
 
     // Set health to max if new pet is summoned
     // in this function old pet is saved with current health eg. 20% and new one is loaded from db with same amount
     // pet should have full health
+    //将pet的生命值设置为最大值
     pet->SetHealth(pet->GetMaxHealth());
 
     // generate new name for summon pet
+    //(生成召唤宠物的新名称)
+    // 为宠物生成一个新的名称，并将其赋值给new_name变量
     std::string new_name = sObjectMgr->GeneratePetName(petentry);
+    // 如果new_name不为空，则将宠物的名称设置为new_name
     if (!new_name.empty())
         pet->SetName(new_name);
 
@@ -5989,6 +6054,7 @@ void Spell::EffectGameObjectSetDestructionState(SpellEffIndex effIndex)
     gameObjTarget->SetDestructibleState(GameObjectDestructibleState(m_spellInfo->Effects[effIndex].MiscValue), player, true);
 }
 
+//召唤守护
 void Spell::SummonGuardian(uint32 i, uint32 entry, SummonPropertiesEntry const* properties, uint32 numGuardians, bool personalSpawn)
 {
     Unit* caster = m_originalCaster;
