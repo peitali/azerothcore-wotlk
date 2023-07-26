@@ -6057,27 +6057,40 @@ void Spell::EffectGameObjectSetDestructionState(SpellEffIndex effIndex)
 //召唤守护
 void Spell::SummonGuardian(uint32 i, uint32 entry, SummonPropertiesEntry const* properties, uint32 numGuardians, bool personalSpawn)
 {
+    //获取原始施法者
     Unit* caster = m_originalCaster;
     if (!caster)
         return;
 
+    //施法者是否是图腾类型
     if (caster->IsTotem())
+        //是图腾则获取该图腾的所有者，并赋值给施法者
         caster = caster->ToTotem()->GetOwner();
 
     // in another case summon new
+    //获取施法者的等级
     uint8 summonLevel = caster->GetLevel();
 
     // level of pet summoned using engineering item based at engineering skill level
+    //(根据工程技能等级使用工程物品召唤宠物，并确定宠物的等级)
+
+    //m_CastItem应该是召唤道具
+    //是召唤道具并且施法者是玩家
     if (m_CastItem && caster->GetTypeId() == TYPEID_PLAYER)
+        //获取道具模板
         if (ItemTemplate const* proto = m_CastItem->GetTemplate())
         {
             // xinef: few special cases
+            //如果该道具的必须技能是工程技能
             if (proto->RequiredSkill == SKILL_ENGINEERING)
             {
+                //获取施法者的工程技能
                 if (uint16 skill202 = caster->ToPlayer()->GetSkillValue(SKILL_ENGINEERING))
+                    //召唤等级等于
                     summonLevel = skill202 / 5;
             }
 
+            //这里应该是处理特殊的技能
             switch (m_spellInfo->Id)
             {
                 // Dragon's Call
